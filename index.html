@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>다크소울 턴제 - 방어/회피 로직</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #000; color: white; font-family: sans-serif; }
+    #ui, #dodge-bar, #restart-btn { position: absolute; z-index: 2; }
+    #ui {
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 10px;
+    }
+    button.card {
+      padding: 15px 30px;
+      font-size: 18px;
+      background: #222;
+      color: white;
+      border: 2px solid #555;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    #status {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 10px;
+    }
+    #dodge-bar {
+      bottom: 100px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 300px;
+      height: 20px;
+      background: #666;
+      display: none;
+    }
+    #green-zone {
+      position: absolute;
+      top: 0; height: 100%;
+      width: 60px;
+      background: #0f0;
+      left: 120px;
+    }
+    #dodge-pointer {
+      position: absolute;
+      top: 0;
+      width: 5px;
+      height: 100%;
+      background: red;
+    }
+    #restart-btn {
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      padding: 15px 30px;
+      font-size: 20px;
+      background: white;
+      color: black;
+      border: none;
+      display: none;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div id="status">
+    <p>플레이어 HP: <span id="player-hp">100</span></p>
+    <p>보스 HP: <span id="boss-hp">100</span></p>
+    <p id="round">Round: 1</p>
+    <p id="message">카드를 선택하세요</p>
+  </div>
+
+  <div id="ui">
+    <button class="card" onclick="playerAction('attack')">🗡️ 공격</button>
+    <button class="card" onclick="playerAction('dodge')">🌀 회피</button>
+    <button class="card" onclick="playerAction('block')">🛡️ 방어</button>
+  </div>
+
+  <div id="dodge-bar" onclick="resolveDodge()">
+    <div id="green-zone"></div>
+    <div id="dodge-pointer"></div>
+  </div>
+
+  <button id="restart-btn" onclick="location.reload()">게임 다시 시작</button>
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+
+  <script>
+    let scene, camera, renderer;
+    let playerHp = 100, bossHp = 100, round = 1;
+    let boss, bossColorIndex = 0;
+    let dodgeActive = false;
+    let dodgeInterval, pointerPos = 0, pointerDirection = 1;
+    let dodgeSuccess = false;
+    let defending = false;
+
+    const colors = [0xff0000, 0x0000ff, 0x00ff00, 0xffff00];
+    const messageEl = document.getElementById('message');
+    const playerHpEl = document.getElementById('player-hp');
+    const bossHpEl = document.getElementById('boss-hp');
+    const roundEl = document.getElementById('round');
+    const dodgeBar = document.getElementById('dodge-bar');
+    const pointer = document.getElementById('dodge-pointer');
+    const greenZone = document.getElementById('green-zone');
+    const restartBtn = document.getElementById('restart-btn');
+
+    init();
+    animate();
+
+    function init() {
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+
+      const light = new THREE.DirectionalLight(0xffffff, 1);
+      light.position.set(5, 10, 5);
+      scene.add(light);
+
+      const ground = new THREE.Mesh(
+        new THREE.PlaneGeometry(200, 200),
+        new THREE.MeshStandardMaterial({ color: 0x222222 })
+      );
+      ground.rotation.x = -Math.PI / 2;
+      scene.add(ground);
+
+      boss = createBoss();
+      scene.add(boss);
+
+      camera.position.set(0, 5, 10);
+      camera.lookAt(0, 1, 0);
+    }
+
+    function createBoss() {
+      const geometry = new THREE.BoxGeometry(2, 4, 2);
+      const material = new THREE.MeshStandardMaterial({ color: colors[bossColorIndex % colors.length] });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.position.set(0, 2, 0);
+      return mesh;
+    }
+
+    function animate() {
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
+    }
+
+    function playerAction(type) {
+      if (playerHp <= 0 || bossHp <= 0 || dodgeActive) return;
+
+      if (type === 'attack') {
+        bossHp -= 20;
+        messageEl.textContent = '공격 성공!';
+        endPlayerTurn();
+      }
+
+      else if (type === 'block') {
+        defending = true;
+        messageEl.textContent = '방어 태세! 피해 감소 준비';
+        endPlayerTurn();
+      }
+
+      else if (type === 'dodge') {
+        startDodge();
+      }
+
+      updateStatus();
+    }
+
+    function startDodge() {
+      dodgeActive = true;
+      dodgeSuccess = false;
+      dodgeBar.style.display = 'block';
+      pointerPos = 0;
+      pointerDirection = 1;
+      pointer.style.left = '0px';
+
+      dodgeInterval = setInterval(() => {
+        pointerPos += 3 * pointerDirection;
+        if (pointerPos >= 295 || pointerPos <= 0) pointerDirection *= -1;
+        pointer.style.left = pointerPos + 'px';
+      }, 16);
+    }
+
+    function resolveDodge() {
+      if (!dodgeActive) return;
+
+      clearInterval(dodgeInterval);
+      dodgeActive = false;
+      dodgeBar.style.display = 'none';
+
+      const pointerRect = pointer.getBoundingClientRect();
+      const greenRect = greenZone.getBoundingClientRect();
+      const pointerCenter = pointerRect.left + pointerRect.width / 2;
+
+      if (pointerCenter >= greenRect.left && pointerCenter <= greenRect.right) {
+        dodgeSuccess = true;
+        messageEl.textContent = "✅ 회피 성공! 데미지 없음";
+      } else {
+        dodgeSuccess = false;
+        messageEl.textContent = "❌ 회피 실패! 보스에게 맞았습니다.";
+      }
+
+      updateStatus();
+      endPlayerTurn();
+    }
+
+    function endPlayerTurn() {
+      if (bossHp <= 0) {
+        round++;
+        roundEl.textContent = 'Round: ' + round;
+        scene.remove(boss);
+        boss = createBoss();
+        bossHp = 100;
+        scene.add(boss);
+        playerHp = Math.min(playerHp + 20, 100);
+        updateStatus("보스를 처치! 다음 라운드! HP +20");
+        return;
+      }
+
+      // 보스 턴
+      setTimeout(() => {
+        let damage = 10;
+        let log = "보스의 공격! ";
+
+        if (dodgeSuccess) {
+          log += "회피 성공으로 피해 없음!";
+          damage = 0;
+        } else if (dodgeSuccess === false && dodgeActive === false) {
+          // 회피 실패한 경우
+          damage = 15;
+          log += "회피 실패! HP -15";
+        } else if (defending) {
+          damage = 5;
+          log += "방어 중! 피해 감소: HP -5";
+        }
+
+        playerHp -= damage;
+        defending = false;
+        dodgeSuccess = false;
+
+        updateStatus(log);
+
+        if (playerHp <= 0) {
+          gameOver();
+        }
+      }, 1000);
+    }
+
+    function updateStatus(msg) {
+      if (msg) messageEl.textContent = msg;
+      playerHpEl.textContent = Math.max(playerHp, 0);
+      bossHpEl.textContent = Math.max(bossHp, 0);
+    }
+
+    function gameOver() {
+      messageEl.textContent = `☠️ 게임 오버! ${round - 1}명의 보스를 처치했습니다.`;
+      restartBtn.style.display = 'block';
+    }
+  </script>
+</body>
+</html>
